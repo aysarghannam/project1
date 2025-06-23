@@ -1,41 +1,33 @@
 #include <iostream>
 #include <cstdlib>
-#include <pthread.h>
+#include <omp.h>
 #include <sys/time.h>
 
 using namespace std;
 
-typedef struct {
-    int start_row;
-    int end_row;
-    int width;
-    int height;
-    int** image;
-    int** output;
-} thread_data_t;
+void blur_parallel(int** image, int** output, int width, int height, int num_threads) {
+    #pragma omp parallel num_threads(num_threads)
+    {
+        int i_start, i_end;
+        int tid = omp_get_thread_num();
+        int nthreads = omp_get_num_threads();
+        int rows_per_thread = height / nthreads;
 
-void* blur_thread(void* arg) {
-    thread_data_t* data = (thread_data_t*) arg;
-    int start = data->start_row;
-    int end = data->end_row;
-    int width = data->width;
-    int height = data->height;
-    int** image = data->image;
-    int** output = data->output;
+        i_start = tid * rows_per_thread;
+        i_end = (tid == nthreads - 1) ? height - 1 : (i_start + rows_per_thread);
 
-    for (int i = start; i < end; i++) {
-        if (i == 0 || i == height - 1) continue;
-        for (int j = 1; j < width - 1; j++) {
-            int sum = 0;
-            for (int di = -1; di <= 1; di++) {
-                for (int dj = -1; dj <= 1; dj++) {
-                    sum += image[i + di][j + dj];
+        for (int i = max(1, i_start); i < min(i_end, height - 1); i++) {
+            for (int j = 1; j < width - 1; j++) {
+                int sum = 0;
+                for (int di = -1; di <= 1; di++) {
+                    for (int dj = -1; dj <= 1; dj++) {
+                        sum += image[i + di][j + dj];
+                    }
                 }
+                output[i][j] = sum / 9;
             }
-            output[i][j] = sum / 9;
         }
     }
-    pthread_exit(NULL);
 }
 
 void blur_sequential(int** image, int** output, int width, int height) {
@@ -119,28 +111,8 @@ int main() {
                     for (int j = 0; j < width; j++)
                         output[i][j] = 0;
 
-                pthread_t* threads = (pthread_t*) malloc(NUM_THREADS * sizeof(pthread_t));
-                thread_data_t* thread_data = (thread_data_t*) malloc(NUM_THREADS * sizeof(thread_data_t));
-
-                int rows_per_thread = height / NUM_THREADS;
-
                 gettimeofday(&start, NULL);
-
-                for (int i = 0; i < NUM_THREADS; i++) {
-                    thread_data[i].start_row = i * rows_per_thread;
-                    thread_data[i].end_row = (i == NUM_THREADS - 1) ? height : (i + 1) * rows_per_thread;
-                    thread_data[i].width = width;
-                    thread_data[i].height = height;
-                    thread_data[i].image = image;
-                    thread_data[i].output = output;
-
-                    pthread_create(&threads[i], NULL, blur_thread, (void*) &thread_data[i]);
-                }
-
-                for (int i = 0; i < NUM_THREADS; i++) {
-                    pthread_join(threads[i], NULL);
-                }
-
+                blur_parallel(image, output, width, height, NUM_THREADS);
                 gettimeofday(&end, NULL);
 
                 elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1e6;
@@ -148,9 +120,6 @@ int main() {
 
                 cout << "متوازي (" << NUM_THREADS << " threads): " << elapsed << " ثانية\n";
                 cout << "⏩ Speedup (" << NUM_THREADS << " threads): " << speedup << "x\n";
-
-                free(threads);
-                free(thread_data);
             }
         }
 
